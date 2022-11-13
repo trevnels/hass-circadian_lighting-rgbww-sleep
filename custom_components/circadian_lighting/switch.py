@@ -13,6 +13,8 @@ from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_COLOR_TEMP,
     ATTR_RGB_COLOR,
+    ATTR_RGBW_COLOR,
+    ATTR_RGBWW_COLOR,
     ATTR_TRANSITION,
     ATTR_XY_COLOR,
 )
@@ -34,6 +36,7 @@ from homeassistant.util.color import (
     color_RGB_to_xy,
     color_temperature_kelvin_to_mired,
     color_temperature_to_rgb,
+    color_rgbww_to_rgb,
     color_xy_to_hs,
 )
 
@@ -54,6 +57,8 @@ CONF_SLEEP_ENTITY = "sleep_entity"
 CONF_SLEEP_STATE = "sleep_state"
 CONF_SLEEP_CT, DEFAULT_SLEEP_CT = "sleep_colortemp", 1000
 CONF_SLEEP_BRIGHT, DEFAULT_SLEEP_BRIGHT = "sleep_brightness", 1
+CONF_SLEEP_RGBW = "sleep_rgbw"
+CONF_SLEEP_RGBWW = "sleep_rgbww"
 CONF_DISABLE_ENTITY = "disable_entity"
 CONF_DISABLE_STATE = "disable_state"
 CONF_INITIAL_TRANSITION, DEFAULT_INITIAL_TRANSITION = "initial_transition", 1
@@ -81,6 +86,12 @@ PLATFORM_SCHEMA = vol.Schema(
         ),
         vol.Optional(CONF_SLEEP_BRIGHT, default=DEFAULT_SLEEP_BRIGHT): vol.All(
             vol.Coerce(int), vol.Range(min=1, max=100)
+        ),
+        vol.Optional(CONF_SLEEP_RGBWW): vol.All(
+            [int], vol.Length(min=5, max=5)
+        ),
+        vol.Optional(CONF_SLEEP_RGBW): vol.All(
+            [int], vol.Length(min=4, max=4)
         ),
         vol.Optional(CONF_DISABLE_ENTITY): cv.entity_id,
         vol.Optional(CONF_DISABLE_STATE): vol.All(cv.ensure_list, [cv.string]),
@@ -111,6 +122,8 @@ def setup_platform(hass, config, add_devices, discovery_info=None):
             sleep_state=config.get(CONF_SLEEP_STATE),
             sleep_colortemp=config.get(CONF_SLEEP_CT),
             sleep_brightness=config.get(CONF_SLEEP_BRIGHT),
+            sleep_rgbw=config.get(sleep_rgbw),
+            sleep_rgbww=config.get(sleep_rgbww),
             disable_entity=config.get(CONF_DISABLE_ENTITY),
             disable_state=config.get(CONF_DISABLE_STATE),
             initial_transition=config.get(CONF_INITIAL_TRANSITION),
@@ -175,6 +188,8 @@ class CircadianSwitch(SwitchEntity, RestoreEntity):
         sleep_state,
         sleep_colortemp,
         sleep_brightness,
+        sleep_rgbw,
+        sleep_rgbww,
         disable_entity,
         disable_state,
         initial_transition,
@@ -196,6 +211,8 @@ class CircadianSwitch(SwitchEntity, RestoreEntity):
         self._sleep_state = sleep_state
         self._sleep_colortemp = sleep_colortemp
         self._sleep_brightness = sleep_brightness
+        self._sleep_rgbw = sleep_rgbw
+        self._sleep_rgbww = sleep_rgbww
         self._disable_entity = disable_entity
         self._disable_state = disable_state
         self._initial_transition = initial_transition
@@ -295,7 +312,12 @@ class CircadianSwitch(SwitchEntity, RestoreEntity):
         return color_temperature_kelvin_to_mired(self._color_temperature())
 
     def _calc_rgb(self):
-        return color_temperature_to_rgb(self._color_temperature())
+        if self._sleep_rgbw is not None and self._is_sleep():
+            return color_rgbww_to_rgb(*self._sleep_rgbw[:3], self._sleep_rgbw[3], self._sleep_rgbw[3], self._circadian_lighting._min_colortemp, self._circadian_lighting._max_colortemp)
+        elif self._sleep_rgbww is not None and self._is_sleep():
+            return color_rgbww_to_rgb(*self._sleep_rgbww[:3], self._sleep_rgbww[3], self._sleep_rgbww[4], self._circadian_lighting._min_colortemp, self._circadian_lighting._max_colortemp)
+        else:
+            return color_temperature_to_rgb(self._color_temperature())
 
     def _calc_xy(self):
         return color_RGB_to_xy(*self._calc_rgb())
@@ -355,14 +377,23 @@ class CircadianSwitch(SwitchEntity, RestoreEntity):
             if self._brightness is not None:
                 service_data[ATTR_BRIGHTNESS] = int((self._brightness / 100) * 254)
 
-            light_type = self._lights_types[light]
-            if light_type == "ct":
-                service_data[ATTR_COLOR_TEMP] = int(self._calc_ct())
-            elif light_type == "rgb":
-                r, g, b = self._calc_rgb()
-                service_data[ATTR_RGB_COLOR] = (int(r), int(g), int(b))
-            elif light_type == "xy":
-                service_data[ATTR_XY_COLOR] = self._calc_xy()
+            # if we are in sleep mode and an rgbw/rgbww override is set, do that instead of the normal calculation
+            # if the light firmware let me turn the brightness all the way down in colortemp mode these special cases wouldn't be necessary, but alas...
+            if self._sleep_rgbw is not None and self._is_sleep():
+                # rgbw override is set and we are in sleep mode, do that
+                service_data[ATTR_COLOR_RGBW] = self._sleep_rgbw
+            elif self._sleep_rgbww is not None and self._is_sleep():
+                # rgbww override is set and we are in sleep mode, do that
+                service_data[ATTR_COLOR_RGBWW] = self._sleep_rgbww
+            else:
+                light_type = self._lights_types[light]
+                if light_type == "ct":
+                    service_data[ATTR_COLOR_TEMP] = int(self._calc_ct())
+                elif light_type == "rgb":
+                    r, g, b = self._calc_rgb()
+                    service_data[ATTR_RGB_COLOR] = (int(r), int(g), int(b))
+                elif light_type == "xy":
+                    service_data[ATTR_XY_COLOR] = self._calc_xy()
 
             _LOGGER.debug(
                 "Scheduling 'light.turn_on' with the following 'service_data': %s",
