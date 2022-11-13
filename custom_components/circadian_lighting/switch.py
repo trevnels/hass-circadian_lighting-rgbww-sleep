@@ -381,10 +381,10 @@ class CircadianSwitch(SwitchEntity, RestoreEntity):
             # if the light firmware let me turn the brightness all the way down in colortemp mode these special cases wouldn't be necessary, but alas...
             if self._sleep_rgbw is not None and self._is_sleep():
                 # rgbw override is set and we are in sleep mode, do that
-                service_data[ATTR_COLOR_RGBW] = self._sleep_rgbw
+                service_data[ATTR_RGBW_COLOR] = self._sleep_rgbw
             elif self._sleep_rgbww is not None and self._is_sleep():
                 # rgbww override is set and we are in sleep mode, do that
-                service_data[ATTR_COLOR_RGBWW] = self._sleep_rgbww
+                service_data[ATTR_RGBWW_COLOR] = self._sleep_rgbww
             else:
                 light_type = self._lights_types[light]
                 if light_type == "ct":
